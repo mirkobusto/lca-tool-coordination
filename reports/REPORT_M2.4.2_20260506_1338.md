@@ -221,4 +221,94 @@ senza permesso esplicito. Ho seguito le istruzioni del task harness.
 
 ---
 
-**End of report.**
+## Hotfix M2.4.2.0.1 — partial (critical bugs only) — 2026-05-07
+
+**Stato:** parziale. Solo bug critici A/B/G fixati. Bug C-F (UX polish)
+sono sospesi in attesa che Mirko verifichi via manual QA che il workflow
+process-based core (steps 2-3 della §5.4) sblocca con A/B/G.
+
+**Trigger:** manual QA notturno post-merge M2.4.3+M3.1.2 ha rivelato
+7 bug bloccanti. Per gestire il rischio di token expiration mid-session
+abbiamo splittato in: (1) critical bundle ora, (2) UX polish bundle dopo
+QA verification.
+
+### Bug fixati (critical)
+
+| # | Bug | Severity | Fix |
+|---|---|---|---|
+| A | Nome flusso custom perso al re-mount | Critical | Aggiunto FlowRef variant `custom` (pydantic + TS additivo). FlowSelector ora persiste eagerly via onChange ad ogni keystroke in modalità Custom; al re-mount restora display_name dall'attributo `value`. |
+| B | Unità disconnessa dal dataset | Critical | QuantityInput accetta nuovo prop `lockedUnit`. Quando il FlowRef linkato ha `display_unit`, ProcessEditorPage lo passa come `lockedUnit` e l'unità viene resa read-only (icona 🔒 + tooltip). Custom flow → unità editabile. Cambio flusso → quantity.unit auto-sincronizzato. |
+| G | Toggle internal_process | Critical | Confermato assente nell'UI prima del fix (lo scan client-side esisteva ma era nascosto dietro l'input testuale generico). Aggiunto segmented control `[Database \| Custom \| Processi interni]` sopra l'input. Modalità Internal nascosta quando `includeInternal=false` (es. exchange di output). |
+
+### Bug pending (carry-over alla prossima passata)
+
+| # | Bug | Severity |
+|---|---|---|
+| C | Reference + Avoided checkbox non mutex | High |
+| D | QuantityInput leading zero "06.5" | High |
+| E | Location dropdown lista incompleta | Medium |
+| F | Riferimento parametro UX (radio + manager) | Medium |
+
+### Decisioni autonome
+
+1. **Nome del nuovo FlowRef variant: `custom`** invece di `internal` (suggerito dallo SPEC). `internal` collidedrebbe semanticamente con `internal_process` — `custom` esprime meglio "nome libero, no DB binding".
+2. **Cambio additivo, no migrazione.** Aggiunto come quarta variante alla discriminated union; tutti i record esistenti rimangono validi (continuano ad essere db_dataset/db_elementary/internal_process). Backwards-compat.
+3. **Custom flow + zolca export = errore esplicito.** `zolca_builder_process_based.flow_for_exchange` ora raise `ZolcaBuildError` chiaro se incontra un custom flow ("must be resolved to a DB dataset, elementary flow, or internal process before export"). I custom flow sono editing placeholders, non export-ready — questo allinea col comportamento atteso (un progetto serio si chiude prima di esportare).
+4. **Validazione client-side custom name.** ProcessEditorPage.validate ora rifiuta exchange con `flow_ref.type === "custom"` e nome vuoto (in linea con la regola pydantic `min_length=1`).
+5. **Internal mode mostra TUTTI i processi se la query è vuota.** Pre-fix `searchInternal` esigeva una query non-empty; ora se l'utente apre la modalità Internal e non ha ancora digitato nulla, i top 8 processi compaiono nel listbox. Migliora discoverability del workflow Process B → input internal verso A.
+
+### Files toccati (11)
+
+**Backend (4):**
+- `backend/models/process_based.py` — +`FlowRefCustom`, union estesa
+- `backend/models/__init__.py` — re-export `FlowRefCustom`
+- `backend/services/zolca_builder_process_based.py` — branch esplicito custom→ZolcaBuildError
+- `backend/tests/test_process_based_models.py` — +2 tests (round-trip + empty-name reject)
+
+**Frontend (7):**
+- `frontend/src/types/processBased.ts` — `FlowRefCustom` aggiunta all'union
+- `frontend/src/components/forms/FlowRefBadge.tsx` — icona + label `custom`
+- `frontend/src/components/forms/QuantityInput.tsx` — prop `lockedUnit`, helper `<UnitField>`
+- `frontend/src/components/forms/__tests__/QuantityInput.test.tsx` — +2 tests
+- `frontend/src/components/ghost-text/FlowSelector.tsx` — segmented mode toggle, modalità custom, persistence eager
+- `frontend/src/components/ghost-text/__tests__/FlowSelector.test.tsx` — riscritto test internal sul nuovo toggle, +2 tests (custom commit, custom re-mount preservation)
+- `frontend/src/pages/ProcessEditorPage.tsx` — `lockedUnit` propagato, `handleFlowChange` auto-sync `quantity.unit`, validazione custom name
+
+### Test delta
+
+- **Frontend vitest pre-hotfix:** 102/102 (riportato §3.1)
+- **Frontend vitest post-hotfix:** 106/106 ✅ (+4 nuovi: lockedUnit read-only, lockedUnit null editable, custom commit eager, custom re-mount preservation; il test `surfaces internal_process candidates` è stato riscritto sul nuovo toggle, non doppio-conteggiato)
+- **Backend pytest `test_process_based_models` pre-hotfix:** 29/29
+- **Backend pytest `test_process_based_models` post-hotfix:** 31/31 ✅ (+2: custom round-trip, custom empty-name rejection)
+
+### Bundle delta
+
+- **Pre-hotfix main:** 97.28 KB gzip (riportato §3.2)
+- **Post-hotfix main:** 97.29 KB gzip
+- **Delta:** +0.01 KB gzip (well under il +5 KB budget — il diff è essenzialmente logica + types che si compilano via)
+- **ProcessEditorPage chunk:** 6.06 KB gzip (lazy)
+
+### Diff stats
+
+```
+ 11 files changed, 415 insertions(+), 89 deletions(-)
+```
+
+### Verifica QA richiesta (Mirko, before C-F)
+
+Per validare che il workflow process-based core ora funziona, rifare:
+
+1. **Bug A** — Step 2 §5.4 originale: Process A con 1 input (DB dataset) + output ref con nome custom "Manufactured part" → switch tab Custom in FlowSelector → digita nome → save → cambia tab Inputs↔Outputs → reload pagina → il nome **deve persistere**.
+2. **Bug B** — Stessa Process A: dataset gas naturale (m3) come input → campo unità deve mostrare "m3 🔒" read-only. Cambia dataset → unità segue. Switch a custom → unità torna editabile.
+3. **Bug G** — Step 3 nuovo: Process B con input → segmented toggle "Processi interni" → seleziona output di Process A dal listbox → flow_ref persiste come `internal_process`.
+
+Se 3/3 OK → procedi con bug bundle C-F (high+medium severity).
+Se < 3/3 → loop hotfix sui critical residui.
+
+### Commit
+
+`f9f1ec9` su `claude/frontend-process-editor-uHvd4` nel repo `lca-tool` (force-push, PR #15 aggiornata, NO nuovo PR).
+
+---
+
+**End of report (M2.4.2.0.1 partial appended 2026-05-07).**
