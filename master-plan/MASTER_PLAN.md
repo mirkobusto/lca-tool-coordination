@@ -62,20 +62,35 @@ Il tool copre:
 | M2.3 | ✅ merged main | Data collection template xlsx + disclosure flag + 9_ii edge fix |
 | M2.3.1 | ✅ merged main | Modelling Guide PDF generator (output documentale V1) |
 
-### Roadmap M3.x — bridge OpenLCA (NEW dettaglio)
+### Roadmap M3.x — bridge OpenLCA
 
 | Sprint | Status | Descrizione |
 |---|---|---|
-| M3.1.0 | ✅ merged main pre-2026-05-04 (`d202083`) | PoC build .zolca via olca-ipc |
-| M3.1.0.1-4 | ✅ merged main PR #1 (`4fe29a6`) | Catena fix runtime: UnitGroups embed, manifest filename, DEFLATE corruption, Process @id Derby VARCHAR(36) |
-| M3.1.0.5 | ✅ done (no-code) | Re-upload rclone path mount (Drive REST upload trunca 48 byte EOCD — problema di canale) |
-| M3.1.0.6 | ✅ merged main PR #2 (`e0a9a03`) | openLCA-strict integration test harness (3 pytest CI structural) + reference fixture 2018 dummy 8 KB committato |
-| M3.1.0.7 | ✅ merged main PR #3 | zolca preflight via olca-ipc Python (3 pytest @preflight opt-in workstation) |
-| **M3.1.1** | 🔄 in code | **zolca full mapping** — actors / locations / sources / lcia_method / lcia_categories / nw_sets. SPEC scritta 2026-05-05. Claude Code in auto mode su `night/M3.1.1-zolca-full-mapping`. |
-| M3.1.2 | ⏳ futuro | Real Characterization Factors (path JRC EF 3.0 CC-BY-4.0, ~5 MB embedded JSON) — V1.5 backlog |
+| M3.1.0 | ✅ merged main | PoC build .zolca via olca-ipc |
+| M3.1.0.1-4 | ✅ merged main PR #1 | Catena fix runtime: UnitGroups embed, manifest filename, DEFLATE corruption, Process @id Derby VARCHAR(36) |
+| M3.1.0.5 | ✅ done (no-code) | Re-upload rclone path mount |
+| M3.1.0.6 | ✅ merged main PR #2 | openLCA-strict integration test harness |
+| M3.1.0.7 | ✅ merged main PR #3 | zolca preflight via olca-ipc Python |
+| M3.1.1 | ✅ merged main PR #4 | zolca full mapping — actors / locations / sources / lcia_method / lcia_categories / nw_sets |
+| **M3.1.2** | **🔧 in progress (parallelo)** | **Real Characterization Factors (path JRC EF 3.1 CC-BY-4.0, ~5 MB embedded JSON)** |
 | M3.2 | ⏳ V1 | Re-import LCIA + report draft DOCX |
 | **V1 release** | ⏳ post-M3.2 | Release pubblica tier base |
-| **V1.5** | ⏳ post-V1 | **AI Grant Parser premium** (§11) + multi-DB + uncertainty MC + PEFCR completa + **GUI redesign Kimi-style** (§12) |
+| **V1.5 partial** | ✅ **COMPLETE 2026-05-06** | G1+G2+G2.1+G2.2+G3+B1+A1+A2+A2.1 — UX AI-native + WCAG 2.1 AA compliant |
+| **V1.5 release** | ⏳ post-V1 | AI Grant Parser premium + multi-DB + uncertainty MC + PEFCR completa + GUI redesign Kimi-style |
+
+#### Roadmap V1.5 partial — ✅ COMPLETE 2026-05-06
+
+| Sprint | Status | Commit / PR |
+|---|---|---|
+| G1 — Command Palette ⌘K | ✅ DONE | `45e5b6f` PR #5 |
+| G2 + G2.1 — Ghost Text + qualifier + layout | ✅ DONE | `6c9f618` PR #6 |
+| G3 — Optimistic UI | ✅ DONE | `51b70e7` PR #8 |
+| G2.2 — Process_name retrieval split + SuggestionOverlay overflow | ✅ DONE | `d05e350` PR #10 |
+| B1 — Global entity search backend | ✅ DONE | `d98447d` PR #9 |
+| A1 — Audit a11y baseline | ✅ DONE | report-only, PR coord #1 |
+| A2 + A2.1 — a11y Critical + Serious + link contrast hot fix | ✅ DONE | post-PR #11 |
+
+**Stato V1.5 partial complete**: tool con UX AI-native (Command Palette + Ghost Text + Optimistic UI) + WCAG 2.1 AA compliance verificato empirico. Pronto per pitch istituzionale EU procurement.
 
 ### Risultato cumulativo M3.1.0.x
 
@@ -212,6 +227,9 @@ Reminder breve:
 | **29** | **2026-05-05** | **PR strategy post-M3.1.0.x**: 1 PR squash per sprint singolo (M3.1.0.7 model). Catene multi-sprint giustificano 2+ PR squash (M3.1.0.x model). | **active** |
 | **30** | **2026-05-05** | **M3.1.1 LCIA scope = scaffolding only**. ImpactCategory popolate ma `impact_factors=[]`. CF reali in M3.1.2/V1.5 path JRC EF 3.0 CC-BY-4.0. Tradeoff: zolca importabile + LCIA computabile (con valori 0) vs scope creep e licensing question ecoinvent. | **active** |
 | **31** | **2026-05-05** | **GUI redesign Kimi research dossier**: dossier completo (~80 pagine, 9 file MD) in folder Drive `Substitute HiQ cortex/Kimi_Agent_gui/`. Ingaggio = V1.5/V2 (post-V1 release). Vedi §12. | **active** |
+| 38 | 2026-05-06 | Workflow operativo: SPEC e REPORT scambiati via repo coordination, NO copia-incolla manuale tra chat | active |
+| 39 | 2026-05-06 | WCAG 2.1 AA compliance milestone — verifica empirica obbligatoria pre-release via axe-core su tutte le route principali | active |
+| 40 | 2026-05-06 | Design tokens semantici separati per `bg-` vs `text-` quando il tool è dark theme (lezione A2.4 → A2.1) | active |
 
 ---
 
@@ -242,43 +260,38 @@ Reminder breve:
 
 ### V1.5 (post V1 release, ~3-4 mesi)
 
-**Top priority post-V1**:
+**Top priority post-V1 release**:
 - **AI Grant Parser premium** (vedi §11)
-- **GUI redesign Kimi-style** (vedi §12) — dossier completo già esistente in Drive folder
-- **CF reali (JRC EF 3.0)** — sprint M3.1.2 dedicato, ~5 MB embedded JSON CC-BY-4.0
+- **GUI redesign Kimi-style** (vedi §12)
+- **CF reali (JRC EF 3.1)** — sprint M3.1.2 in progress parallelo
+
+**Carry-over post V1.5 partial complete (priorità per sprint successivi)**:
+
+| Priorità | Sprint candidato | Stima | Note |
+|---|---|---|---|
+| ALTA | G1.x search globale entità — frontend integration palette | 0.5-1 settimana | B1 backend pronto, manca solo wire-up |
+| ALTA | Matcher M1 threshold ricalibrazione | 0.5-1 settimana | pending Mirko 15 BoM rows manual QA |
+| MEDIA | A3 Fix a11y Moderate + Minor (i18n stringhe ~120, scope th, focus indicator, font-size minimo, skip-link) | 3-5 gg | non blocker pitch |
+| MEDIA | G2.x Filter chips UI alternative a qualifier syntax | 3-4 gg | pattern Linear/Notion |
+| MEDIA | G2.x Match-replace popup di RowItem con ghost search | 3-5 gg | riusa GhostInput G2 |
+| MEDIA | G2.x ProcessEditor / Wizard ghost text (multiline) | 1-2 settimane | GhostTextarea |
+| MEDIA | ECOINVENT_FLOW_UUIDS lookup table | TBD | sblocca match rate ghost reali |
 
 **Multi-DB / uncertainty / compliance**:
 - Multi-DB matching (EF, Agri-footprint, ELCD, IDEMAT/Carbon Minds) — workstream prep attivo
 - Uncertainty Monte Carlo UI
 - PEFCR completa (CFF formula engine, DQR weighted, verification rules)
 - DQR auto-translation a Distribution (pedigree matrix → lognormal sigma)
-- Re-import compiled data collection template (BoM v2 ingestion)
-- GoalAndScope hydration from answers (PUT endpoint)
-- Convention `<qid>__justification` fix strutturale (campo dedicato `should_justifications`, migration v6→v7)
-- Process-local + database-scoped parameters UI validation
-- Migration boilerplate refactor `scripts/_migration_lib.py`
-- Compliance Snapshot ricco (matrice standard × aspect)
-- Multi-tenant SaaS infra
-- Editor scenari (UI lista + form)
-- Layout designer per report (custom branding tier alto)
-- Modelling Guide editor utente (template custom)
-- Expert level Kimi enrichment per delta_ILCD.json
-- Edge case rule 3 regex tightening multifunctionality co-occurrence
-- DQR per-process dim diverse da row-level
 
-**Carry-over da catena M3.1.0.x**:
-- Matcher M1 quality ricalibrazione (4/6 mismatch DESSERT BoM specialistico) — sprint dedicato pre-release
-- `parameters/` populated quando project ha Parameter rows
-- Embed-only-used UnitGroup (-1.2 KB)
-- Custom UnitGroup per unità esotiche (m3, MJ heating, kg dry matter, kg P, kg N)
-- Determinismo `lastChange` field (CI cache stability)
-- Multi-UnitGroup coverage (Volume, Items, Area, Time, Person*km)
-- Diff test su reference 13 MB (M3.1.0.6 §9.1) — esteso quando builder popola tutti i tipi (parzialmente risolto in M3.1.1 con fixture custom 30 KB)
-- Coverage extra Derby columns (oggi solo `ref_id` VARCHAR(36)) — quando builder popola `name`, `description`, `version`
-- `_ilcd_strict.py` con XSD validator (quando arriva ILCD output)
-- olca-modules Java build for CI headless (sblocco CI cloud true headless, costo ~3-5gg, ADR 27 path)
-- `force_track_overwrites=True` parameter in zolca_preflight (per CI cloud DB ephemeral, M3.1.0.7 §10.1)
-- Locations UUID canonical openLCA reference data (oggi UUIDv5 tool-namespace, drift cosmetico — M3.1.1 §10.2)
+**Carry-over V2 (richiede design review)**:
+- Inline @-mention syntax
+- Highlight matched chars nel dataset name
+- Statistiche qualifier usage
+- Smart suggestion proattivo
+- Optimistic delete con conferma timer
+- Conflict resolution UI
+- Cross-tab BroadcastChannel sync mutations
+- Audit utenti reali screen reader (NVDA + VoiceOver Italian voices)
 
 ### V2 (post V1.5, ~6+ mesi)
 - Editor multi-livello standards (viewer/author/user paid)
