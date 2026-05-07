@@ -1093,3 +1093,168 @@ step QA 0.1.
 chiuso. Bug Q + Bug X risolti, test +19, bundle invariato. Pending
 manual QA Mirko sui 5 step. Se 5/5 + ground-truth verde → **MERGE V1.5
 PARTIAL**.
+
+---
+
+## Append hotfix M2.4.2.0.2e (2026-05-07)
+
+### Contesto
+
+Hotfix correttivo finale pre-merge V1.5 partial. Manual QA dei 5 step
+di 2d ha passato (reverse-lookup OK, single source of truth OK), ma il
+ground-truth check sull'auto-conversion 2c ha rivelato un bug residuo:
+la quantity converted **non si propaga al campo del QuantityInput**,
+anche se il toast mostra il valore corretto. Severità: **Critical**
+(LCA correctness — l'utente vede il toast "Convertito: 10 hg → 1000 g"
+ma il campo Quantità resta `10`; se l'utente non clicca Annulla, il
+modello salvato avrà unit `g` con quantity `10` invece di `1000` →
+dato sbagliato di un fattore 100).
+
+### Bug fixato
+
+- **Y** — Wiring + state-sync fix in `QuantityInput.tsx`. La causa
+  effettiva non era il wiring fra `<UnitPicker>` e parent (era già
+  corretto in 2c: il parent in `ProcessEditorPage.tsx` propaga sia
+  `unit_ref_id` SIA `quantity` allo state Exchange). La causa era che
+  `<QuantityInput>` manteneva uno **stato locale** `rawValue`
+  (`useState`) inizializzato lazy una sola volta al mount, e **non
+  veniva mai re-sincronizzato** quando `value.value` cambiava
+  esternamente (es. dopo auto-conversion). Il prop arrivava aggiornato
+  ma l'input mostrava il `rawValue` stantio.
+
+  Fix: aggiunto un `useEffect` che re-sincronizza `rawValue` quando
+  `value.value` cambia, usando un `lastPushedRef` per distinguere il
+  re-render echo della nostra propria `onChange` (skip) da una
+  mutazione esterna (sync). Preserva la euristica empty-vs-zero al
+  mount inizializzando il ref al valore corrente.
+
+### Diagnostica root cause
+
+Il SPEC §3.1 ipotizzava due cause: Caso A (parent ignora `quantity` nel
+callback) o Caso B (UnitPicker callback signature mancante).
+**Verificate entrambe e risultano corrette già da 2c**:
+
+- `UnitPicker.handleUnitChange` (UnitPicker.tsx:131-173) calcola
+  correttamente `newQty = convertQuantity(...)` e chiama
+  `onChange({ unitId, quantity: newQty, unitName })` — entrambi i
+  campi.
+- `ProcessEditorPage` (riga ~635-643) riceve il callback e costruisce
+  `nextQty: Quantity` con `value: quantity` propagando correttamente
+  allo state Exchange via `onChange({ unit_ref_id, quantity: nextQty })`.
+
+Il bug era **un livello più giù**: `<QuantityInput>` riceveva la nuova
+`Quantity` come prop ma **ignorava `value.value` per il rendering**
+perché il display era guidato da uno stato locale (`rawValue`)
+inizializzato solo al mount e mai re-sync.
+
+Questo è una classe di bug "controlled vs uncontrolled" tipica di
+componenti React che mantengono raw text per gestire empty/decimal/
+leading-zero senza accorgersi che il prop sorgente può cambiare.
+
+### File toccati
+
+- `frontend/src/components/forms/QuantityInput.tsx` (+18/-1) — `useEffect`
+  + `useRef` per re-sync del `rawValue`; aggiornamento di
+  `lastPushedRef` su ogni push (typing, switchToFixed).
+- `frontend/src/components/forms/__tests__/QuantityInput.test.tsx`
+  (+72/-1) — 3 nuovi test unit per Bug Y.
+- `frontend/src/components/forms/__tests__/UnitPicker.test.tsx`
+  (+89/-2) — 2 nuovi test integration end-to-end (UnitPicker +
+  QuantityInput in un parent harness che mima il wiring di
+  `ProcessEditorPage`).
+
+### Test
+
+- **Vitest**: 183 (post-2d) → **188** (+5 nuovi test, di cui 2
+  integration end-to-end UnitPicker+QuantityInput, 3 unit
+  QuantityInput esterno-sync). Tutti verdi (188/188).
+- **Pytest**: invariato — zero file backend toccati. (Nota: in questa
+  sessione l'ambiente Python è 3.11 e `requirements.txt` richiede
+  `olca-schema>=2.6.0` che ha bound `python>=3.12`, quindi non è stato
+  possibile eseguire pytest qui. Nessuna modifica al codice backend
+  in questo sprint.)
+- **Bundle main gzip**: 97.55 KB (delta ≈ 0 KB rispetto a 2d, è una
+  fix wiring di 18 righe nette su un componente già esistente).
+
+### Decisioni autonome prese
+
+1. **Layer del fix**: dopo aver verificato che UnitPicker e
+   ProcessEditorPage erano già corretti, il fix è sceso a
+   `QuantityInput.tsx`. Documentato sopra in "Diagnostica root cause".
+2. **Strategia di re-sync**: scelto `lastPushedRef` (con valore
+   inizializzato al mount) invece di un confronto pieno
+   `parsed(rawValue) === value.value`. Motivo: preserva l'esistente
+   euristica empty-vs-zero del mount + lo `switchToFixed` che azzera
+   intenzionalmente il rawValue mentre push `value=0`.
+3. **Test integration**: scritto in `UnitPicker.test.tsx` con un
+   `ExchangeHarness` stateful che mima il wiring del parent reale
+   (`ProcessEditorPage`), invece di fare mounting completo della
+   pagina (che avrebbe richiesto mock di useUnits, useFlowSearch,
+   FlowSelector, parameters, processes). L'integration copre
+   esattamente il punto di rottura del bug end-to-end.
+
+### Domande/dubbi emersi durante l'implementazione (SEZIONE OBBLIGATORIA)
+
+- **Bug Z (default-selection dropdown)**: durante la diagnosi non ho
+  trovato evidenza di un default-selection bug in `UnitPicker`. La
+  riga `value={currentResolved?.unit.id ?? ""}` (UnitPicker.tsx:275)
+  riflette correttamente `props.unitRefId`, e Database mode
+  auto-commit (UnitPicker.tsx:120-129) imposta unit_ref_id al
+  matched dataset.unit appena disponibile. Lo screenshot di Mirko
+  che mostrava "Default = g" è probabilmente coerente col post-cambio
+  manuale a `hg` poi `g` (Mirko stesso conferma di averlo cambiato).
+  **Nessun fix necessario.**
+
+- **Pytest in CI vs locale**: questa sessione non ha potuto eseguire
+  pytest per mismatch di versione Python. Suggerirei di confermare
+  la baseline pytest invariata via CI (GitHub Actions PR #15) prima
+  del merge. Nessun file backend è stato toccato da 2e, quindi
+  l'aspettativa è zero regressioni.
+
+- **Nessun altro dubbio sostanziale**.
+
+### Manual QA gate post-fix
+
+3 step rapidi sul branch `claude/frontend-process-editor-uHvd4`:
+
+1. **Bug Y — Auto-conversion verde**: Process editor → Input → tab
+   Database → cerca `rice seed` o `steel` (qualunque dataset Mass) →
+   seleziona → quantity = 10, unit dropdown = kg. Cambia dropdown unit
+   a `g`. **Atteso**: toast "Convertito: 10 kg → 10000 g — Annulla" +
+   campo Quantità mostra **10000** (NON resta 10).
+2. **Bug Y — Annulla toast funziona**: stesso setup, dopo che la
+   conversione è applicata, click "Annulla" sul toast. **Atteso**:
+   campo Quantità torna a 10, unit dropdown torna a kg.
+3. **Bug Y — Auto-dismiss mantiene**: cambia da kg a g, aspetta 5+
+   secondi senza cliccare Annulla. **Atteso**: toast scompare,
+   quantity resta 10000.
+
+**Ground truth check finale**: 5/5 step QA M2.4.2.0.2d (reverse-lookup)
+ancora verdi + 7/8 step QA 2c con l'8° (Bug Y) ora verde + 6/6 2b +
+5/5 2a + 3/3 0.1.
+
+### Carry-over
+
+- **Bug T** (409 Conflict parameters) — invariato, assorbito da M2.4.4.
+- **Bug Z** (default selection dropdown) — non confermato in questa
+  sessione, NO carry-over necessario salvo nuova ripro Mirko.
+- Tutti gli altri carry-over di 2c/2d restano (M2.4.4 parameter
+  manager, refactor FlowSelector, M2.5 categorie semantiche,
+  byproduct/waste persistence, M2.4.6 BoM editor parity, N suggest
+  scaling, O Browse/Explore, G1.x search globale, R modeling_mode
+  immutabile, S combobox blur, L+ ristrutturazione pagina progetto).
+
+### Commit
+
+- **Codice**: `ae7df21` su `claude/frontend-process-editor-uHvd4`,
+  force-push, **PR #15 aggiornata** (no nuovo branch, no nuova PR).
+- **Coordination (questo append)**: push normale append-only su
+  `claude/frontend-process-editor-uHvd4`. **PR #12 si aggiorna**
+  automaticamente.
+
+---
+
+**End of M2.4.2.0.2e append (2026-05-07).** Hotfix wiring chiuso.
+Bug Y risolto a livello QuantityInput state-sync, test +5, bundle
+invariato. Pending manual QA Mirko sui 3 step. Se 3/3 + ground-truth
+verde → **MERGE V1.5 PARTIAL FINALE**.
