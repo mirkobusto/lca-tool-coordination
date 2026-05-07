@@ -312,3 +312,114 @@ Se < 3/3 → loop hotfix sui critical residui.
 ---
 
 **End of report (M2.4.2.0.1 partial appended 2026-05-07).**
+
+---
+
+## Append hotfix M2.4.2.0.2a (2026-05-07)
+
+### Contesto
+
+Manual QA del 2026-05-07 sul branch post-M2.4.2.0.1 ha rivelato 4 bug strutturali aggiuntivi. Sono stati split in due tranche per ridurre rischio sessione lunga:
+
+- **2a (questo append)** — 4 critical/high strutturali: B', H, I, J
+- **2b (sprint successivo)** — 4 UX polish: C (radio ref/avoided/byproduct/waste), D (leading zero quantity), E (location dropdown), F (parameter manager + tooltip)
+
+Direzione UX strategica confermata da Mirko stesso giorno: tool **non** deve essere copia di SimaPro con 8 tab semantici. UX rapida command-palette/ghost-text style (linea G1+G2). Categorie semantiche LCA derivate invisibilmente da `flow_type` del dataset, non imposte all'utente. Questa direzione **non** richiede modifiche in 2a; è il contesto entro cui si decide quali fix far passare e quali differire.
+
+### Bug fixati
+
+#### Bug B' — Suggest popup DB assente in input mode
+
+- **Sintomo riprodotto:** in input mode, tab Database, digito nel campo Flusso → nessun suggerimento. Stesso editor in output mode → suggerimenti OK.
+- **Root cause confermata:** ProcessEditorPage passa `flowType={isOutput ? "product" : "any"}`. Il backend `/api/projects/{pid}/suggest` (M2.4.3) valida il param `flow_type` con regex `^(product|elementary)$` e 422-rejecta qualunque altro valore. Il frontend forwardava `flow_type=any` che il backend rifiutava silenziosamente; `fetchExternal` sul `!res.ok` ritornava `[]`, da cui dropdown vuoto.
+- **Fix:** in `frontend/src/components/ghost-text/FlowSelector.tsx::fetchExternal()`, omettere il param `flow_type` quando `flowType === "any"` (il backend tratta `None = no filter`). Per i risultati misti, scegliere `buildElementarySuggestion` se `r.flow_type === "elementary"`, altrimenti `buildDatasetSuggestion`. Esteso `SuggestResult` (frontend types) con i campi `flow_type` e `category` aggiunti dal backend M2.4.3.
+
+#### Bug H — Lista processi non refresha post-save (cache stale)
+
+- **Sintomo riprodotto:** creo Process → salvo → navigo a `/projects/{pid}/processes` → non appare. F5 manuale → appare.
+- **Root cause confermata:** `useCreateProcess`, `useUpdateProcess` e `useDeleteProcess` invalidavano correttamente la queryKey `["processes", pid]`. Tuttavia ProcessEditorPage registrava una **seconda** osservatrice sulla stessa queryKey con un fetcher diverso (`async () => projectQ.data?.processes ?? []`). React Query, su invalidate, rifa l'unica fetcher associata all'osservatore attivo: in editor il fetcher mirroring veniva rieseguito → ridava il valore stale di `projectQ.data` (mai re-fetchato, key diverso). La cache restava popolata di vecchio. Quando l'utente navigava in lista entro `staleTime: 5_000` (config in `main.tsx`), `useProcessList` non rifa la fetch perché vede dati "freschi" (appena scritti dal fetcher mirroring).
+- **Fix:** sostituito in `ProcessEditorPage` il custom `useQuery({ queryKey: ["processes", pid], queryFn: ... })` con `useProcessList(pid)`, l'hook canonico che usa `listProcesses(pid)` come fetcher. Eliminata la collision di key/fetcher; ora invalidate-on-mutation rifa la fetch corretta, la cache è canonical-truth.
+
+#### Bug I — Cross-contamination FlowSelector multi-input
+
+- **Sintomo riprodotto:** Input #1 segmented=Processi interni con processo selezionato → "+ Aggiungi input" → Input #2 segmented=Database, query → ricerca DB non funziona.
+- **Root cause confermata:** **lo stesso meccanismo di Bug B'**, NON una vera cross-contamination di stato. Input #1 funziona perché "Processi interni" è scan client-side, non hit backend. Input #2 in mode "Database" cade sulla path `fetchExternal` con `flowType="any"` → rifiutato dal backend (vedi Bug B'). Verificato che `<FlowSelector>` ha stato locale isolato (`useState`/`useRef` per istanza), che la `key` prop è `ex.id` (non index) in `ExchangeRow.map` (line 368 di ProcessEditorPage), e che non esistono singleton/AbortController condivisi. Nessuna delle 4 ipotesi della SPEC era effettivamente la causa.
+- **Fix:** automaticamente risolto dal fix Bug B'. Per blindare contro future regressioni, aggiunto un test `two sibling FlowSelectors keep their state isolated (Bug I)` che monta 2 istanze, fa interagire la prima e assicura che `onChange` della seconda non venga mai invocato dall'azione della prima.
+- **Razionale ipotesi scelta:** spec listava 4 ipotesi (state condiviso / cleanup / key / AbortController). L'ispezione del codice ha escluso tutte e 4 in 5 minuti; il sintomo combaciava 1:1 con Bug B' (output funziona, input no, perché i due hanno `flowType` diverso). Fix più piccolo + safer = fix B' più test sentinel.
+
+#### Bug J — Sticky autocomplete riscrive match precedente
+
+- **Sintomo riprodotto:** seleziono "natural gas" → backspace cancella tutto → dopo qualche frame il campo si ri-popola con "natural gas".
+- **Root cause confermata:** in `FlowSelector::inputValue` (line 226 originale): `inputValue = mode === "custom" ? customName : query !== "" ? query : persistedDisplay`. Quando l'utente cancella manualmente, `query` torna a `""` → cade nel ramo `persistedDisplay = value?.display_name`, riscrivendo il nome del flow appena cancellato. Pattern controlled-input con fallback malato.
+- **Fix:** introdotto stato `userCleared` (boolean) tracciato in `handleInputChange` quando il testo torna `""`. Reset di `userCleared` su selezione (mouseDown), su mode-switch (`switchMode`), su keystroke non-vuoto. `inputValue` ora aggiunge il ramo `userCleared ? "" : persistedDisplay`. In più, il clear manuale propaga al parent via `onChange(null)` se la modalità corrente combacia con il tipo del value (segnale "reset flow_ref"). La signature di `onChange` è stata estesa a `(next: FlowRef | null) => void`. Il parent `ExchangeRow::handleFlowChange` gestisce il null sostituendo con `PLACEHOLDER_DATASET` (mantiene typed flow_ref valido per il modello, e fa scattare il messaggio "seleziona un flusso" della validate() su Salva).
+
+### File toccati
+
+| File | +/- |
+| --- | --- |
+| `frontend/src/components/ghost-text/FlowSelector.tsx` | +33 / -3 |
+| `frontend/src/components/ghost-text/__tests__/FlowSelector.test.tsx` | +119 / -0 |
+| `frontend/src/lib/suggest/types.ts` | +5 / -0 |
+| `frontend/src/pages/ProcessEditorPage.tsx` | +14 / -7 |
+| `frontend/src/hooks/__tests__/useProcesses.cache.test.tsx` | +213 / -0 (nuovo file) |
+| **Totale** | **+384 / -10**, 5 file |
+
+Backend invariato (zero file `.py` toccati). Schema/migrations/API shape invariati.
+
+### Test
+
+- **Vitest pre-hotfix:** 106 (102 M2.4.2 + 4 M2.4.2.0.1)
+- **Vitest post-hotfix:** **113 ✅** (+7 nuovi):
+  - `omits flow_type when flowType='any' so backend does not 422-reject (Bug B')`
+  - `two sibling FlowSelectors keep their state isolated (Bug I)`
+  - `manual clear leaves the field empty and emits onChange(null) (Bug J)`
+  - 4 cache test in `useProcesses.cache.test.tsx`: create→list refetches, update→rename visible, delete→removed, e regression sentinel "no key collision"
+- **Pytest:** non eseguito in questa sessione (deps backend non installate localmente). Backend invariato → nessuna regressione possibile da queste modifiche.
+
+### Bundle
+
+- **Main `index-*.js` pre-hotfix:** 97.29 KB gzip
+- **Main `index-*.js` post-hotfix:** 97.29 KB gzip — **delta = 0 KB**
+- **ProcessEditorPage (lazy):** 6.06 KB → 6.10 KB gzip (+0.04 KB, dovuto al wrapping null-handling in handleFlowChange)
+- Ben sotto il budget +2 KB target / +5 KB tollerato.
+
+### Decisioni autonome prese
+
+1. **Estensione tipo `SuggestResult` frontend** con `flow_type` + `category` (allineamento al backend M2.4.3 già deployato). Rationale: serviva per implementare la build-per-row in fetchExternal senza casting ad-hoc; il backend già emette i campi ma il frontend type non li tipava. Zero impatto runtime.
+2. **Estensione signature `onChange` di FlowSelector** da `(next: FlowRef) => void` a `(next: FlowRef | null) => void`. Rationale: la SPEC test per Bug J asseriva esplicitamente `expect(onChange).toHaveBeenCalledWith(null)`. Alternativa "emit PLACEHOLDER_DATASET inline" sarebbe stata più invasiva nel componente e meno espressiva. Il parent `ExchangeRow` gestisce il null con `PLACEHOLDER_DATASET`, mantenendo il tipo `Exchange.flow_ref` non-nullable.
+3. **Bug I risolto via fix Bug B'** + test sentinel di stato isolation invece di un fix dedicato. Rationale: l'ispezione codice ha escluso le 4 ipotesi della SPEC; il sintomo è una conseguenza diretta di Bug B'. Fix più piccolo, più safer (vedi sezione Bug I).
+4. **Sostituzione completa di `allProcQ`** con `useProcessList(pid)` invece di tenere il custom `useQuery` con queryKey diverso (es. `["editor:other-processes", pid]`). Rationale: usare l'hook canonico produce coerenza tra editor e list page (single source of truth) e ha costo trascurabile (una GET aggiuntiva al mount editor). Non aggiunge `staleTime`/`refetchOnMount: 'always'` perché il root cause è eliminato: le mutation invalidate ora rifanno il fetcher giusto.
+5. **No backend changes**. Avrei potuto allargare la regex `flow_type` del backend ad accettare `"any"` come alias di null, ma fix frontend è più piccolo, più localizzato, e non richiede deploy backend. Backend è invariato.
+6. **Niente refactor in `<DatabaseFlowPicker>` shared** suggerito dalla SPEC. La struttura attuale di FlowSelector è già un singolo componente shared tra input/output mode (il toggle interno controlla la modalità). Estrarre un sub-componente sarebbe stato refactor a parità di funzionalità → fuori scope hotfix.
+
+### Manual QA gate post-merge
+
+Mirko esegue questi 4 step sul branch `claude/frontend-process-editor-uHvd4` con backend+frontend up. Tutti e 4 devono essere verdi prima di procedere a M2.4.2.0.2b. Plus ground-truth check finale.
+
+1. **Bug B'** — Process editor → Input nuovo → tab Database → digita "gas". **Atteso:** suggest popup mostra dataset (almeno una row).
+2. **Bug H** — Crea Process nuovo, salva, naviga a `/projects/{pid}/processes`. **Atteso:** nuovo processo appare in lista **senza** F5 manuale.
+3. **Bug I** — Process editor → Input #1 segmented=Processi interni, seleziona processo. Aggiungi Input #2 segmented=Database, digita "electricity". **Atteso:** suggest popup di Input #2 mostra risultati DB; stato di Input #2 indipendente da Input #1 (nessun valore di Input #1 che si propaga).
+4. **Bug J** — Process editor → Input → tab Database → seleziona "natural gas" → cancella tutto col Backspace. **Atteso:** campo resta vuoto, **NON** ricompare "natural gas". `flow_ref` viene resettato (lo si vede dal FlowRefBadge sotto che torna placeholder).
+5. **Ground truth check** — workflow end-to-end del report originale M2.4.2 §5.4 ancora 6/6 verde (no regressioni). Anche i 3 step del manual QA gate M2.4.2.0.1 (Bug A custom name preservation; Bug B unit lockedUnit/follow; Bug G internal-process toggle) ancora 3/3.
+
+Se 4/4 + ground-truth verdi → procedi a M2.4.2.0.2b (bug C-F UX polish).
+Se anche solo 1 rosso → loop hotfix dedicato.
+
+### Carry-over
+
+- **Bug C** (radio group ref/avoided/byproduct/waste/normale) → M2.4.2.0.2b
+- **Bug D** (leading zero quantity input) → M2.4.2.0.2b
+- **Bug E** (location dropdown lista paesi completa) → M2.4.2.0.2b
+- **Bug F** (parameter manager + tooltip) → M2.4.2.0.2b
+- **Feature K** (conversione unità MWh↔kWh, MJ↔kJ, MJ↔kWh con fattori) → sprint dedicato post-V1.5 partial
+- **Refactor FlowSelector unificato** (search singolo DB+Interni+Custom, no segmented toggle, riconoscimento source da tipo match) → ADR candidate, sprint dedicato
+- **M2.5 Process editor categorie semantiche LCA** (input natura/tecnosfera/output emissioni) → decisione strategica differita post-V1.5 partial; preferenza Mirko per UX rapida command-palette, NO mimicry SimaPro
+
+### Commit
+
+- **Codice:** `4261b94` su `claude/frontend-process-editor-uHvd4` nel repo `lca-tool` (force-push, **PR #15 aggiornata**, NO nuova PR).
+- **Coordination (questo report):** push normale (append-only) sul branch omonimo di `lca-tool-coordination`. **Nessuna PR coordination aperta**: per richiesta SPEC §9, le sezioni M2.4.2.0.1 + M2.4.2.0.2a + M2.4.2.0.2b andranno in **una sola PR coordination cumulativa** a fine M2.4.2.0.2b.
+
+---
+
+**End of M2.4.2.0.2a append (2026-05-07).**
