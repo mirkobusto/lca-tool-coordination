@@ -901,3 +901,195 @@ Se anche solo 1 rosso → loop hotfix correttivo dedicato.
 
 **End of M2.4.2.0.2c append (2026-05-07).** Tripletta hotfix completa.
 Pronti per manual QA + merge V1.5 partial.
+
+---
+
+## Append hotfix M2.4.2.0.2d (2026-05-07)
+
+### Contesto
+
+Hotfix correttivo critico pre-merge V1.5 partial. Il manual QA dei 8
+step di M2.4.2.0.2c (2026-05-07 pomeriggio) ha rivelato 2 bug
+interconnessi sul nuovo `<UnitPicker>` di 2c che bloccavano il merge:
+
+- **Bug Q** — UnitPicker Database mode non implementa il reverse-lookup
+  `unit_name → UnitGroup` dal catalogo. Selezionando un dataset in kWh,
+  la categoria mostrava "(non definita)" e il dropdown era vuoto o
+  mostrava la lista Mass come fallback (sbagliato). Manual QA Database
+  mode falliva 0/4 step (Mass / Energy / Volume / mass*length).
+
+- **Bug X** — Il vecchio campo unità lockato di M2.4.2.0.1 (UnitField
+  con icona 🔒 dentro `QuantityInput`) coesisteva col nuovo
+  `<UnitPicker>` di 2c, dando doppio rendering UI per la stessa cosa
+  (es. `[1.0]` accanto a `[kWh 🔒]` accanto a `<UnitPicker>` con
+  Categoria + dropdown sotto).
+
+### Bug fixati
+
+- **Q — Reverse-lookup unit→group implementato.** Aggiunti due helper
+  puri in `frontend/src/hooks/useUnits.ts`:
+  - `findGroupByUnitName(catalog, unitName)` — restituisce lo
+    `UnitGroup` che contiene la unit, scansionando case-sensitive
+    poi case-insensitive poi `synonyms`. Restituisce `null` se non
+    trovato (NIENTE fallback Mass).
+  - `findUnitAndGroupByUnitName(catalog, unitName)` — variante che
+    restituisce anche la `Unit` matchata, usata per la default
+    selection (`kWh`, NON `MJ` reference).
+
+  In `UnitPicker.tsx` Database mode il flusso è ora:
+  1. Reverse-lookup di `flowDatasetUnit` (nuova prop, sostituisce
+     `referenceUnitName` che era misleading) sul catalogo.
+  2. Se trovato → categoria mostrata letterale (es. "Units of energy"),
+     dropdown ristretta alle units del gruppo, default selection =
+     unit matchata (kWh).
+  3. `useEffect` auto-committa il `unit_ref_id` al mount quando
+     `unitRefId === null` ma il lookup ha avuto successo (così
+     l'Exchange è subito export-ready, senza costringere l'utente a
+     cliccare sulla dropdown).
+  4. Se NON trovato → warning rosso esplicito "⚠ Unit non riconosciuta
+     nel catalogo openLCA: <X>". NIENTE fallback Mass silenzioso.
+
+  Il warning legacy "⚠ Unit legacy: <X>" resta solo per Custom mode
+  (dove ha senso: l'utente potrebbe aver inserito a mano una unit
+  free-form pre-v8). In Database mode è soppresso perché il dedicated
+  warning di sopra copre il caso.
+
+- **X — Legacy unit field rimosso.** `frontend/src/components/forms/
+  QuantityInput.tsx`:
+  - Rimossa prop `lockedUnit?: string | null`.
+  - Rimosso il sub-componente `UnitField` (rendering read-only con
+    icona 🔒) e la sua chiamata sia nel ramo `kind === "fixed"` che
+    in `ParamRefBlock` (param_ref).
+  - Conservato `value.unit` nel modello: tutti gli `onChange`
+    interni preservano la stringa esistente — il `<UnitPicker>` la
+    aggiorna tramite il suo callback (`unitName`).
+
+  Risultato: SOLA UI di unità nell'editor è il `<UnitPicker>`
+  (Categoria locked + Unit dropdown). NIENTE doppio campo accanto a
+  `Quantità: [1.0]`.
+
+  Bug B M2.4.2.0.1 (sync unit↔dataset) NON regredisce: la stessa
+  garanzia è ora coperta dal reverse-lookup del Database mode che
+  pre-seleziona la unit del catalogo che matcha `dataset.unit`.
+
+### File toccati
+
+| File | Δ righe | Note |
+|---|---|---|
+| `frontend/src/hooks/useUnits.ts` | +52/−10 | nuovi helper `findGroupByUnitName`, `findUnitAndGroupByUnitName`; `findGroupByReferenceUnitName` resta ma non più usato dal UnitPicker (lascio in-place per retro-compat di eventuali altri caller futuri — nessun caller attuale) |
+| `frontend/src/hooks/__tests__/useUnits.lookup.test.ts` | +106/0 | nuovo file, 11 test sui helper (Energy, Mass, Volume, mass*length, synonym m³, t*km, pippo, empty, undefined, case-insensitive, default selection vs reference) |
+| `frontend/src/components/forms/UnitPicker.tsx` | +75/−14 | reverse-lookup database mode, useEffect auto-commit, warning "Unit non riconosciuta", rinomina prop `referenceUnitName` → `flowDatasetUnit` |
+| `frontend/src/components/forms/__tests__/UnitPicker.test.tsx` | +172/−1 | catalog esteso (Volume, mass*length); 6 nuovi test Bug Q + 2 nuovi sull'auto-commit / no-spurious-commit |
+| `frontend/src/components/forms/QuantityInput.tsx` | +9/−59 | rimosso prop `lockedUnit`, sub-componente `UnitField`, e relative chiamate da fixed + param_ref |
+| `frontend/src/components/forms/__tests__/QuantityInput.test.tsx` | +13/−27 | rimossi 2 test `lockedUnit` (legacy), aggiunto 1 test regression "Bug X — does NOT render an inline unit field anymore", aggiornato il primo test al nuovo titolo |
+| `frontend/src/pages/ProcessEditorPage.tsx` | +8/−7 | rinominata var `lockedUnit` → `flowDatasetUnit`, rimossa prop `lockedUnit` da `<QuantityInput>`, passata `flowDatasetUnit` al `<UnitPicker mode="database">` |
+
+Totale: +435/−118 (delta netto +317). 7 file frontend, 0 backend, 0
+schema, 0 migration, 0 endpoint.
+
+### Test
+
+- **Vitest:** 164 (post-2c) → **183** (+19, target era ≥+10): 11 nuovi
+  test reverse-lookup helper, 6 nuovi test Bug Q UnitPicker Database
+  mode, 2 nuovi su auto-commit/no-spurious-commit, 1 nuovo regression
+  Bug X. Tutti verdi (36 file passati, 183/183 passati, durata 22.75 s).
+- **Pytest:** invariato per costruzione (zero modifiche backend). Non
+  rieseguito localmente: l'ambiente sandbox è Python 3.11, mentre
+  `requirements.txt` richiede `olca-schema>=2.6.0` che vincola Python
+  ≥3.12. Backend code intatto bit-per-bit.
+- **Bundle main gzip:** 97.55 → 97.55 KB (delta **0 KB**, sotto target
+  +1 KB). Il fix ha rimosso ~50 righe di UI legacy compensando le ~80
+  righe nuove di reverse-lookup, esito a saldo zero sul bundle.
+- **TypeScript:** `tsc --noEmit` clean.
+
+### Decisioni autonome prese
+
+1. **Helper in `useUnits.ts`** (non in `unitConversion.ts`). Razionale:
+   `useUnits.ts` già ospita `findGroupById`, `findGroupByReferenceUnitName`,
+   `findGroupByFlowProperty`, `findUnitInGroup`, `findUnitById` — l'API
+   di lookup ha un naming consistente. Anche se i nuovi helper sono
+   funzioni pure (non hook), tenerli accanto agli altri lookup
+   semplifica la discoverability.
+2. **Test in nuovo file `useUnits.lookup.test.ts`** invece di estensione
+   di `unitConversion.test.ts`. Razionale: separazione di concern (i
+   test di `convertQuantity`/`formatQuantity` non hanno il fixture
+   catalog). Lo SPEC concedeva la scelta esplicitamente in §5.1.
+3. **Auto-commit via `useEffect`** invece di propagare il fix in
+   `ProcessEditorPage.handleFlowChange`. Razionale: tiene la logica
+   unit-resolution dentro `<UnitPicker>` (single responsibility). Il
+   `handleFlowChange` di ProcessEditorPage continua a settare solo
+   `quantity.unit` come stringa; il picker si occupa di risolvere
+   l'`unit_ref_id` UUID. Riduce il numero di chiamate `useUnits()` nel
+   tree.
+4. **Rinomina prop `referenceUnitName` → `flowDatasetUnit`.** Razionale:
+   il vecchio nome era misleading — non è la "reference unit" del
+   gruppo (es. MJ per Energy) ma la stringa unit del dataset (es. kWh).
+   La prop esisteva da 2c, nessun caller esterno la consuma (solo
+   ProcessEditorPage), rinomina sicura.
+5. **Helper `findGroupByReferenceUnitName` lasciato in-place** anche se
+   il `<UnitPicker>` non lo usa più. Razionale: è un helper pubblico
+   esportato; rimuoverlo sarebbe un breaking change non necessario per
+   questo hotfix. Marcabile come "deprecato in favore di
+   `findGroupByUnitName`" in uno sprint di cleanup futuro.
+6. **Warning Database-mode-unknown stilizzato in rose-50** (più severo)
+   invece dello stesso amber-50 del legacy warning. Razionale: il caso
+   è effettivamente più grave (un dataset del catalogo ha una unit non
+   in catalogo → significa che `/api/units` o il seed sono incompleti,
+   non è un dato utente sporco). Severity visiva aiuta Mirko a
+   distinguerlo dal legacy free-form.
+
+### Domande/dubbi emersi durante l'implementazione
+
+| # | Severity | Domanda |
+|---|---|---|
+| 1 | low | L'helper `findGroupByReferenceUnitName` non ha più caller in `<UnitPicker>`. Vale la pena un cleanup ora (rimozione + adeguamento jsdoc) o tenerlo per back-compat fino a un futuro sprint di cleanup? Decisione provvisoria: **lasciato in-place** per minimizzare il diff dell'hotfix. |
+| 2 | low | Il `useEffect` di auto-commit nel `<UnitPicker>` potrebbe in teoria fire-loop se il parent rerendera con una `onChange` non memoizzata che restituisce sempre `{ unit_ref_id: null, ... }`. In pratica l'effect dipende da `currentUnitId` (derivato da `props.unitRefId`) che si stabilizza non appena il parent recepisce il commit. Test "auto-commits on mount" passa al primo onChange senza loop. **Robustness suggerita:** se in futuro Mirko nota un loop, prima soluzione è memoizzare l'onChange in ProcessEditorPage. Non bloccante per il merge. |
+| 3 | low | Lo SPEC §3.2 menziona "auto-conversion intra-gruppo: comportamento 2c invariato (toast undo 5s, opzione C)". L'ho verificato leggendo il codice: `handleUnitChange` di `<UnitPicker>` non è stato toccato; la logica `convertQuantity` + `pushAction` + scoping per `unit_group_id` è esattamente quella di 2c. Test 2c "auto-converts kg → g and shows undo toast" passa ancora. ✅ |
+| 4 | medium | Il reverse-lookup è O(N) per chiamata (~180 unit per il catalogo full). Lo SPEC §5 suggeriva una `Map<lowercase_name, group>` precompilata + memoize. **Decisione:** non implementato perché `findUnitAndGroupByUnitName` è chiamato dentro un `useMemo` con dipendenza solo `[catalog, props]`, e il catalog ha `staleTime: Infinity`. Il costo per render è effettivamente già una sola scansione, e la chiamata avviene solo se props cambiano. Se in futuro arrivano editor con N=100+ exchanges simultanei e profiling mostra costo, allora aggiungere memoize globale. |
+
+### Manual QA gate post-fix (per Mirko)
+
+Vedi SPEC §7. Sintesi dei 5 step bloccanti:
+
+1. **Bug Q — Energy:** dataset `electricity` (kWh) → categoria "Units
+   of energy", dropdown 13 Energy units, default = kWh, nessun warning.
+2. **Bug Q — Mass:** dataset `steel` (kg) → categoria "Units of mass",
+   dropdown 25 Mass units, default = kg.
+3. **Bug Q — Volume:** dataset `natural gas` (m3) → categoria "Units
+   of volume", dropdown 36 Volume units, default = m3.
+4. **Bug Q — Transport:** dataset `transport lorry` (t*km) → categoria
+   "Units of mass*length", dropdown 7 mass*length units, default = t*km.
+5. **Bug X — Single source of truth:** nessun campo unit lockato 🔒
+   accanto a Quantità in nessuno dei 4 dataset sopra.
+
+Plus regression: 8/8 step QA 2c, 6/6 step QA 2b, 5/5 step QA 2a, 3/3
+step QA 0.1.
+
+### Carry-over
+
+- **Bug T** (409 Conflict ricorrente su `/api/projects/.../parameters`
+  durante l'editor di processo) — diagnosticare separatamente, NON
+  bloccante per merge V1.5 partial. Probabilmente assorbito da sprint
+  M2.4.4 parameter manager UI.
+- Tutti gli altri carry-over di 2c restano (M2.4.4 parameter manager,
+  refactor FlowSelector, M2.5 categorie semantiche, byproduct/waste
+  persistence, M2.4.6 BoM editor parity, N suggest scaling, O
+  Browse/Explore, G1.x search globale, R modeling_mode immutabile, S
+  combobox blur, L+ ristrutturazione pagina progetto).
+
+### Commit
+
+- **Codice:** `b0d74df` su `claude/frontend-process-editor-uHvd4`
+  (force-push, **PR #15 aggiornata** — non aperto nuovo branch né
+  nuova PR). Base post-rebase su `origin/main`.
+- **Coordination (questo append):** push normale append-only sul
+  branch `claude/frontend-process-editor-uHvd4` di
+  `lca-tool-coordination`. **PR coordination cumulativa #12 si
+  aggiorna** automaticamente col push.
+
+---
+
+**End of M2.4.2.0.2d append (2026-05-07).** Hotfix correttivo critico
+chiuso. Bug Q + Bug X risolti, test +19, bundle invariato. Pending
+manual QA Mirko sui 5 step. Se 5/5 + ground-truth verde → **MERGE V1.5
+PARTIAL**.
