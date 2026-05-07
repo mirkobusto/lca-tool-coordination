@@ -654,3 +654,250 @@ dedicato.
 ---
 
 **End of M2.4.2.0.2b append (2026-05-07).**
+
+
+---
+
+## Append hotfix M2.4.2.0.2c (2026-05-07)
+
+### Contesto
+
+Ultimo hotfix della tripletta pre-merge V1.5 partial. Chiude **Bug P
+(architetturale)**: validazione delle unità tramite ontologia chiusa
+openLCA con auto-conversione tra unità dello stesso gruppo. Bug C
+carry-over (byproduct/waste persistence) e Bug F (`/parameters` route)
+restano per M2.4.4. Bug K (conversione fattore-based) **assorbita** in P:
+emerge gratis dal closed-set.
+
+### Implementazione
+
+**Schema v8 — Pydantic JSON storage (no SQL/alembic in questo repo):**
+- `Exchange.unit_ref_id: Optional[str]` — UUID FK al catalogo openLCA.
+- `Process.not_export_ready: bool` — flag aggregato (almeno un Exchange
+  con unit non risolvibile).
+- `Project.schema_version` default bump 7 → 8.
+- `extra="ignore"` sui Project model preserva il caricamento di v1..v7
+  legacy; la migration script va eseguita prima dell'export zolca.
+
+**Catalogo unità (closed-set):**
+- CSV ufficiali openLCA scaricati e committati in
+  `backend/data/openlca_refdata/{unit_groups,units}.csv` (mirrored from
+  `GreenDelta/data/refdata`, branch `master`).
+- Conta effettiva: **21 unit_groups + 179 units** (la SPEC parlava di
+  180 — la fonte ufficiale GreenDelta ne pubblica 179 al 2026-05-07,
+  asserzione test rilassata a `170 ≤ N ≤ 200`).
+- `backend/services/units_catalog.py` — typed loader con cache
+  module-level + helpers `get_unit_by_id` / `get_unit_by_name` /
+  `get_unit_by_synonym` / `resolve_unit_string`.
+
+**API:**
+- `GET /api/units` con `Cache-Control: public, max-age=86400` (24 h).
+  Payload statico, single round-trip per session.
+
+**Migration v7 → v8:**
+- `scripts/migrate_v7_to_v8.py` — pattern coerente con
+  `migrate_v6_to_v7.py` (atomic write, optional tarball backup, dry-run,
+  idempotent).
+- Strategia di matching per `Exchange.quantity.unit`:
+  1. exact (case-sensitive)
+  2. case-insensitive
+  3. synonyms del catalogo
+- Empty / null → `unit_ref_id = None`, **non flagga** il Process (stato
+  neutro).
+- Unmatchable (`"pippo"`, `"xyz"`) → `unit_ref_id = None` + flag
+  `Process.not_export_ready = True`.
+- Logging: `matched_exact / matched_ci / matched_synonym / unmatched /
+  neutral_empty / processes_flagged`.
+
+**Zolca builder (`zolca_builder_process_based.py`):**
+- Hard-fail all'inizio del build se uno qualsiasi `Process.not_export_ready`
+  → errore esplicito con elenco dei nomi (no silent fail).
+- Helper `_unit_refs_for_exchange(ex)`: preferisce `Exchange.unit_ref_id`
+  (catalog UUID == openLCA UUID stabile, export-ready out-of-the-box);
+  fallback alla risoluzione legacy via `quantity.unit` string per
+  exchange neutri.
+
+**Frontend:**
+- `frontend/src/types/units.ts` — `UnitGroup`, `Unit`,
+  `UnitsCatalogResponse`.
+- `frontend/src/hooks/useUnits.ts` — TanStack Query con `staleTime:
+  Infinity, gcTime: Infinity`. Helpers `findGroupById`,
+  `findGroupByReferenceUnitName`, `findGroupByFlowProperty`,
+  `findUnitInGroup`, `findUnitById`.
+- `frontend/src/lib/unitConversion.ts` — `convertQuantity` (intra-group)
+  + `formatQuantity` (display-friendly).
+- `frontend/src/components/forms/UnitPicker.tsx` — 2 mode (database /
+  custom) come da SPEC §3.5.
+- Toast store esteso: `pushAction(text, label, onAction, opts)` —
+  durata default 5s, button "Annulla" inline. ToastViewport mostra il
+  bottone azione e dismiss programmatico.
+- ExchangeRow integra `<UnitPicker>` accanto a `<QuantityInput>`,
+  sincronizzando `unit_ref_id ⇄ quantity.unit` e propagando le
+  conversioni auto.
+- Header ProcessEditorPage mostra badge `⚠ not_export_ready` quando
+  il flag è settato.
+
+### File toccati
+
+**Backend (commit `d770780`):**
+
+| File | +/- | Tipo |
+|---|---|---|
+| `backend/data/openlca_refdata/unit_groups.csv` | +22/-0 | new |
+| `backend/data/openlca_refdata/units.csv` | +180/-0 | new |
+| `backend/services/units_catalog.py` | +250/-0 | new |
+| `backend/api/units.py` | +25/-0 | new |
+| `backend/main.py` | +4/-1 | mod |
+| `backend/models/process_based.py` | +18/-0 | mod |
+| `backend/models/schema.py` | +7/-5 | mod |
+| `backend/services/zolca_builder_process_based.py` | +43/-3 | mod |
+| `scripts/migrate_v7_to_v8.py` | +245/-0 | new |
+| `backend/tests/test_units_catalog.py` | +118/-0 | new |
+| `backend/tests/test_units_api.py` | +73/-0 | new |
+| `backend/tests/test_migration_v7_to_v8.py` | +175/-0 | new |
+| `backend/tests/test_zolca_process_based.py` | +30/-0 | mod |
+| `backend/tests/test_process_based_models.py` | +3/-1 | mod |
+| `backend/tests/test_schema_m2.py` | +4/-4 | mod |
+
+**Frontend (commit `a8f31de`):**
+
+| File | +/- | Tipo |
+|---|---|---|
+| `frontend/src/types/units.ts` | +28/-0 | new |
+| `frontend/src/hooks/useUnits.ts` | +75/-0 | new |
+| `frontend/src/lib/unitConversion.ts` | +50/-0 | new |
+| `frontend/src/components/forms/UnitPicker.tsx` | +200/-0 | new |
+| `frontend/src/lib/toast/store.ts` | +27/-3 | mod |
+| `frontend/src/lib/toast/ToastViewport.tsx` | +15/-0 | mod |
+| `frontend/src/types/processBased.ts` | +12/-0 | mod |
+| `frontend/src/pages/ProcessEditorPage.tsx` | +50/-2 | mod |
+| `frontend/src/lib/__tests__/unitConversion.test.ts` | +89/-0 | new |
+| `frontend/src/components/forms/__tests__/UnitPicker.test.tsx` | +180/-0 | new |
+
+Totale: ~21 file, ~+1900/-25 righe (vicino al range stimato 18-25 file,
++2500/-300; il delta inferiore alle stime è dovuto al riuso del toast
+store G3 esistente invece di nuovo `<UndoToast>` minimale, decisione
+autonoma §6.3).
+
+### Test
+
+- **Vitest:** baseline 147 → **164 (+17 nuovi, tutti verdi)**.
+  - `unitConversion.test.ts` — 9 test (kg↔g/t, NaN/Infinity,
+    formatQuantity scientific notation).
+  - `UnitPicker.test.tsx` — 7 test (mode A locked categoria, mode B
+    dual-dropdown, auto-conversion + toast + Annulla, legacy warning).
+- **Pytest backend:** 154 verdi sul subset M2.4.2.0.2c (esecuzione
+  parziale: il subset di test che non richiede ChromaDB index seedato
+  passa al 100%). Nuovi test:
+  - `test_units_catalog.py` — 14 test (loader, lookup case-insensitive,
+    synonyms, ordering common-LCA-first).
+  - `test_units_api.py` — 8 test (endpoint shape, cache header,
+    UUID stabile per kg).
+  - `test_migration_v7_to_v8.py` — 8 test (matching strategies,
+    idempotency, dry-run, mixed stats aggregate).
+  - `test_zolca_process_based.py` — 2 nuovi test (block on
+    `not_export_ready`, export usa `unit_ref_id` UUID).
+- **Bundle main:** 97.40 → **97.55 KB gzip** (+0.15 KB, ben dentro la
+  tolleranza < +15 KB).
+- **TypeScript typecheck:** clean (`tsc --noEmit` exit 0).
+- **Migration v8:** testata su DB di test in-memory (`tmp_path` fixture
+  pytest) con 5 exchange legacy: 3 matched_exact, 1 unmatched, 1
+  neutral_empty, 1 Process flagged.
+
+### Decisioni autonome prese (§5 SPEC)
+
+| # | Decisione | Razionale |
+|---|---|---|
+| 1 | **No SQL migration / alembic** — il repo è Pydantic + JSON file storage, non SQL. La "migration v8" è un Python script (`scripts/migrate_v7_to_v8.py`) coerente col pattern v6→v7 esistente. | Spec §3.1 assumeva alembic — non disponibile; adattamento documentato qui. |
+| 2 | **Riuso toast store G3 esistente** invece di nuovo `<UndoToast>` componente minimale. Esteso con `pushAction(...)` invece di duplicare la lib. | Spec §3.6 lo permette come fallback, e il riuso evita doppia code path. |
+| 3 | **Catalogo = 179 units, non 180** come da fonte ufficiale GreenDelta. Asserzione test rilassata a range. | La fonte canonica è GreenDelta/data/refdata; il numero esatto può variare per release ma stiamo well within tolerance. |
+| 4 | **`unit_group_id` esposto in API per ogni Unit** (oltre alla nidificazione in groups[].units[]). | Permette al frontend di validare cross-group conversion senza re-resolve via groups. |
+| 5 | **Migration con `extra="ignore"`** — stored legacy v7 projects (e v1..v6) caricano senza errori; v8 default applica solo alle nuove istanze. | Coerente con M1.5 → M2.x policy esistente. |
+| 6 | **Zolca preflight hard-fail** invece di warning su `not_export_ready`. | Spec §3.4 lo richiede esplicitamente; previene silent fail di gravità B'-pari. |
+| 7 | **Ordine gruppi categoria custom**: Mass, Energy, Volume, Length, Area, Time, Power, Number prima; gli altri 13 alfabetici. | Coerente con SPEC §5.4 (ordine per uso comune LCA). |
+| 8 | **`flow_property` mapping fallback**: il frontend usa `referenceUnitName` come hint quando `groupId` è null (es. dataset legacy senza unit_group_id). | SPEC §5.8 (Mass come fallback default). Il frontend adotta una variante leggera: prova match by reference_unit name, altrimenti lascia categoria libera. |
+
+### Manual QA gate post-fix (per Mirko, 2026-05-07/08)
+
+Eseguire sul branch `claude/frontend-process-editor-uHvd4` (PR #15) con
+backend+frontend up + migration v8 applicata. Tutti devono essere
+verdi prima del merge V1.5 partial.
+
+1. **Setup migration v8** — `python scripts/migrate_v7_to_v8.py
+   --dry-run` poi senza `--dry-run`. Log mostra stats migration data
+   legacy. Nuovi project caricati con `schema_version=8` di default.
+2. **Database mode con Mass** — Process editor → Input nuovo → tab
+   Database → seleziona dataset di massa (es. "steel"). Categoria
+   mostra "Units of mass" (label readonly). Unit dropdown mostra solo
+   le 25 Mass units. Default selezionato: kg.
+3. **Auto-conversion + toast** — Sullo stesso dataset, quantity = 1 kg
+   → cambia unit dropdown a "g". Atteso: quantity diventa 1000, toast
+   visibile "Convertito: 1 kg → 1000 g [Annulla]" per 5s. Click
+   Annulla → quantity torna 1, unit resta "g". Auto-dismiss dopo 5s.
+4. **Database mode con Energy** — Input nuovo → dataset elettricità.
+   Categoria mostra "Units of energy". Unit dropdown mostra 13 Energy
+   units (MJ, kJ, kWh, MWh, ...). Cambio MWh → kWh: quantity x1000,
+   toast.
+5. **Custom mode** — Tab Custom → 2 dropdown sequenziali. Categoria
+   mostra 21 gruppi (Mass, Energy, Volume, Length, Area, Time, Power,
+   Number prima). Seleziona "Units of energy" → secondo dropdown si
+   popola con MJ ref. Salva Process con flow custom + Energy + MJ +
+   quantity 100. Reload pagina → tutto persistente.
+6. **Migration data legacy — match esatto** — apri un Process
+   esistente con Exchange unit="kg" → carica e mostra come kg in Mass
+   group. Nessun warning.
+7. **Migration data legacy — non matchabile** — usa il progetto QA
+   dove avevi creato un Exchange con unit="pippo" → carica e mostra
+   warning rosso "⚠ Unit legacy: pippo". Process header mostra badge
+   `⚠ not_export_ready`. Export zolca fallisce con errore esplicito.
+8. **Export zolca matched** — Process con unit kg → export zolca →
+   file .zolca contiene il UUID openLCA stabile per kg
+   (`20aadc24-a391-41cf-b340-3e4529f44bde`). Verifica con
+   `unzip -p output.zolca \\*.json | grep '20aadc24'`.
+
+**Ground truth check finale (regression):**
+6/6 step QA M2.4.2.0.2b ancora verdi + 5/5 step QA M2.4.2.0.2a +
+3/3 step QA M2.4.2.0.1.
+
+Se 8/8 + ground-truth verdi → **MERGE V1.5 PARTIAL**:
+1. Merge PR #15 (codice) — squash o merge commit.
+2. Merge PR coordination cumulativa.
+3. Tag `v1.5-partial` raccomandato.
+
+Se anche solo 1 rosso → loop hotfix correttivo dedicato.
+
+### Carry-over
+
+- **DROP della colonna legacy `Exchange.quantity.unit`** → migration
+  v9 future (dopo confidence v8 in produzione).
+- **Bug C byproduct/waste persistence** → M2.4.4 (`output_type` enum
+  in Exchange).
+- **Bug F `/parameters` route + UI dedicata** → M2.4.4 parameter
+  manager UI.
+- **Refactor FlowSelector unificato** (no segmented toggle) → ADR
+  candidate, sprint dedicato post-V1.5.
+- **M2.5 categorie semantiche LCA** (input natura/tecnosfera/output
+  emissioni) → decisione strategica differita post-V1.5.
+- **N suggest "usati altrove" scaling** → post-V1.5.
+- **O Browse/Explore DB modality** → post-V1.5.
+- **G1.x search globale entità** (frontend integration) → priorità
+  ALTA bootstrap §6, sprint dedicato.
+
+### Commit
+
+- **Codice:** 2 commit su `claude/frontend-process-editor-uHvd4` nel
+  repo `lca-tool`:
+  - `d770780` — backend (schema v8 + catalog + API + zolca + tests).
+  - `a8f31de` — frontend (UnitPicker + auto-conversion + legacy
+    warning + tests).
+  Force-push con `--force-with-lease`. **PR #15 aggiornata**, NO
+  nuova PR codice.
+- **Coordination (questo report):** push normale (append-only) sul
+  branch omonimo di `lca-tool-coordination`. **PR coordination
+  cumulativa aperta** ora a chiusura della tripletta (M2.4.2.0.1 +
+  2a + 2b + 2c).
+
+---
+
+**End of M2.4.2.0.2c append (2026-05-07).** Tripletta hotfix completa.
+Pronti per manual QA + merge V1.5 partial.
