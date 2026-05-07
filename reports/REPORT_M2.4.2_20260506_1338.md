@@ -423,3 +423,234 @@ Se anche solo 1 rosso → loop hotfix dedicato.
 ---
 
 **End of M2.4.2.0.2a append (2026-05-07).**
+
+## Append hotfix M2.4.2.0.2b (2026-05-07)
+
+### Contesto
+
+6 bug UX polish pre-merge V1.5 partial. **Parte 2/3** dello split per
+ridurre rischio token MCP scaduto:
+
+- **2a** (DONE 2026-05-07 mattina) — 4 bug critical/high strutturali
+  (B' suggest DB input, H cache stale, I row isolation, J sticky autocomplete).
+- **2b** (questo) — 6 bug UX polish frontend-only (C, D, E, F, L, M).
+- **2c** (next) — sprint dedicato a Bug P (units closed-set openLCA + 2
+  tabelle DB + UnitPicker + auto-conversion). SPEC separata.
+
+Direzione UX strategica (conferma Mirko 2026-05-07): il tool **non**
+copia SimaPro con tab semantici. UX rapida command-palette/ghost-text
+style. Le categorie semantiche LCA derivano invisibilmente da
+`flow_type` del dataset. Questo hotfix non altera quella direzione.
+
+### Bug fixati
+
+- **C** — Output exchange: i due checkbox indipendenti "Output di
+  riferimento" + "Avoided product" (combinabili in stato impossibile)
+  diventano un radio group mutex a 5 opzioni
+  `reference / avoided / byproduct / waste / normal`. Mutex anche tra
+  exchange per il flag `reference` (max 1 reference per Process):
+  spostarlo da output A a B mostra un toast `info`, niente modale
+  (friction inutile per spec). `byproduct` e `waste` rimangono presenti
+  ma disabilitati con tooltip "Disponibile in M2.4.4 (carry-over)" —
+  non ho aggiunto colonne backend (vincolo SPEC: "zero schema/backend
+  changes"). Inputs invariati: nessun radio (carry-over waste-as-input
+  → M2.4.4).
+- **D** — `QuantityInput` non parte più da `0` visibile. Init `""` per
+  exchange nuovi (placeholder `"es. 1.0"`), strip leading zero
+  inline (`"06.5"` → `"6.5"`), `"0.5"` resta `"0.5"`, `"0"` resta `"0"`
+  finché non si scrive altro. Validazione `requireValue`: se vuoto al
+  save, errore inline `"La quantità è obbligatoria"` + guard al
+  validate() del ProcessEditorPage (NaN bloccato). Edit di quantity 0
+  legacy (con unit) carica come `"0"` come prima.
+- **E** — `Location` dropdown ora è un combobox autocomplete con ~260
+  entry: ISO 3166-1 alpha-2 completa (~250 territori) + entries LCA
+  speciali (`GLO`, `RoW`, `RER`, `Europe without Switzerland`, `RNA`,
+  `RAS`, `RAF`, `RLA`, `OCE`, `EU-27`). Storage hardcoded in
+  `frontend/src/lib/locations.ts` (NO npm dep nuova: `i18n-iso-countries`
+  non era in deps, hardcodare era più semplice e bundle-friendly).
+  Nuovo componente `LocationPicker.tsx`. Cerca per code (prefix) e per
+  nome (in italiano dove ha senso, fallback inglese).
+- **F** — Quando l'utente clicca "Riferimento parametro": se ci sono
+  parameter nel progetto vede dropdown di selezione, se non ce ne sono
+  vede empty-state hint `"Nessun parametro nel progetto. Creane uno
+  per usare questa modalità."`. Link/button `Gestisci parametri`
+  presente come **tooltip carry-over** `"Disponibile in M2.4.4
+  (carry-over)"` — la route `/projects/:id/parameters` non esiste in
+  `App.tsx` (verificato), quindi rendering di un link funzionante
+  sarebbe un dead link. Il radio non è più disabilitato quando i
+  parameter mancano (nuovo prop default `allowParamRef={true}` in
+  ProcessEditorPage), per permettere all'utente di scoprire l'empty
+  state.
+- **L** — Entry point modeling_mode pari-grado. Estratto componente
+  `ModelingEntryPoints` in `ProjectDetailPage.tsx`: ora rende **sempre
+  e tutti e tre** i CTA (BoM, Processi, Product System); quello
+  matching `data.modeling_mode` è styled `btn-primary`, gli altri
+  `btn`. Scelta opzione 2 (CTA in header) anziché two-card landing:
+  cambia meno code, copre il caso "progetto esistente con dati" senza
+  branching interno, e risolve l'asimmetria descritta (BoM era
+  in basso come empty-state link, Processi era CTA in alto).
+- **M** — Suggest popup nome dataset lungo. Su `SuggestionOverlay`
+  CompactRow il truncate single-line è stato sostituito con
+  `line-clamp-2 leading-snug break-words`; `title=alt.label` già
+  presente sia su CompactRow sia su ExpandedRow. Width popup invariata,
+  font-size invariata (a11y).
+
+### File toccati
+
+| File | +/- | Note |
+|---|---|---|
+| `frontend/src/components/forms/QuantityInput.tsx` | +112 / −24 | Bug D + Bug F |
+| `frontend/src/components/forms/__tests__/QuantityInput.test.tsx` | +103 / −7 | +9 test |
+| `frontend/src/components/forms/LocationPicker.tsx` | +130 / 0 | nuovo (Bug E) |
+| `frontend/src/components/forms/__tests__/LocationPicker.test.tsx` | +47 / 0 | nuovo, 4 test |
+| `frontend/src/lib/locations.ts` | +279 / 0 | nuovo (Bug E catalogue) |
+| `frontend/src/lib/__tests__/locations.test.ts` | +57 / 0 | nuovo, 9 test |
+| `frontend/src/components/ghost-text/SuggestionOverlay.tsx` | +9 / −3 | Bug M |
+| `frontend/src/components/ghost-text/__tests__/SuggestionOverlay.test.tsx` | +30 / 0 | +2 test |
+| `frontend/src/pages/ProcessEditorPage.tsx` | +146 / −80 | Bug C + Bug D guard + Bug E adoption |
+| `frontend/src/pages/__tests__/outputType.test.ts` | +73 / 0 | nuovo, 6 test (Bug C) |
+| `frontend/src/pages/ProjectDetailPage.tsx` | +44 / −21 | Bug L |
+| `frontend/src/pages/__tests__/ModelingEntryPoints.test.tsx` | +37 / 0 | nuovo, 3 test (Bug L) |
+
+Totale: 12 file (8 modificati + 4 nuovi sorgente + 4 nuovi test),
++1247 / −135. Nessun file backend toccato.
+
+### Test
+
+- **Vitest:** 113 (post-2a) → **147** (+34 nuovi test, tutti verdi su
+  `npm test --run`). Suite di test: 33 file passati.
+- **Pytest:** ~485 atteso. Sandbox limitation: il container ospite ha
+  Python 3.11 e `olca-schema>=2.6.0` richiede Python 3.12, quindi i
+  test `test_zolca_*` (~23 file) e i moduli che importano
+  `backend.main` (che importa `zolca_builder`) non collezionano. Sui
+  test runnable (`test_parametric_models`, `test_process_based_models`,
+  `test_schema_m2`, `test_canonical_bom`, `test_formula_parser`, le
+  4 migrations, `test_project_resolver`, `test_standard_loader`,
+  `test_wizard_ilcd`) il risultato è **253 passed, 2 skipped, 0
+  failed**. Zero modifiche backend, nessuna regressione introducibile
+  da questo hotfix; l'ambiente CI Mirko (Python 3.12) deve riprodurre
+  i ~485 verdi originari.
+- **Bundle main gzip:** 97.29 KB (post-2a) → **97.40 KB** (+0.11 KB,
+  ben sotto il +3 KB target). Il `ProcessEditorPage` chunk passa da
+  ~30 a 31.73 KB / 10.36 KB gzip a causa dei ~260 entry hardcoded
+  della catalogue location, ma resta lazy-loaded quindi non impatta
+  il main.
+
+### Decisioni autonome prese
+
+1. **Bug C — byproduct/waste disabilitati.** SPEC dice "zero schema
+   changes" ma elenca 5 opzioni radio. I booleans `is_reference` +
+   `is_avoided_product` coprono solo 3 stati (reference/avoided/normal).
+   Per non desincronizzare UI e storage, le altre due opzioni sono
+   render-only con tooltip carry-over M2.4.4. Mutex e ground-truth dei
+   3 stati persistibili sono completi.
+2. **Bug E — npm dep evitata.** `i18n-iso-countries` non era in deps:
+   per spec ho hardcodato in TS. Bundle delta accettabile (+0.11 KB
+   gzip sul main, +~7 KB sul chunk lazy ProcessEditor che già contiene
+   strings di processo).
+3. **Bug F — link parameters come carry-over tooltip.** La route
+   `/projects/:id/parameters` non è in `App.tsx`. Per spec
+   ("Se la route /parameters non esiste ancora → button comunque
+   presente ma con tooltip 'Disponibile in M2.4.4'") rendo lo `<span>`
+   con `title=…` invece di un anchor che andrebbe in 404.
+4. **Bug L — opzione 2 (CTA pari-grado nell'header) anziché two-card.**
+   Le tre rotte BoM/Processi/Product System sono sempre visibili; lo
+   styling primary segue `data.modeling_mode`. Razionale: la SPEC
+   permetteva opzione 1, 2, o 3 a scelta, e la 2 risolve il problema
+   con il minimo di cambio comportamentale (no nuova landing per
+   progetti vuoti, niente regressioni nei test esistenti di
+   ProcessListPage/ProductSystemEditorPage). Two-card può tornare in
+   sprint UX dedicato post-V1.5.
+5. **Bug F — `allowParamRef` default.** `ProcessEditorPage` passava
+   `allowParamRef={parameters.length > 0}`, che impediva di cliccare
+   il radio quando non c'erano param e quindi rendeva l'empty-state
+   irraggiungibile. Default ora `true`, l'utente può cliccare e
+   scoprire l'hint. Il prop `allowParamRef` resta come override
+   esplicito (i test legacy lo usano).
+6. **Bug C — nuova util pura `applyOutputType`.** Estratta da
+   `ProcessEditorPage` per testabilità (test richiesto: `cannot have
+   two references at save time`, `mutex avoided unflag reference`,
+   `flagging reference auto-unflags previous reference`). Tutti e
+   3 i test richiesti coperti + altri 3 di robustezza.
+
+### Manual QA gate post-fix (per Mirko)
+
+Tutti e 6 devono essere verdi prima di procedere a M2.4.2.0.2c.
+
+1. **Bug C** — Output exchange: clicca radio "Output di riferimento"
+   su output A, poi "Avoided product" sullo stesso → reference si
+   deflagga, avoided si flagga. Crea output B, flagga "Output di
+   riferimento" su B → toast `Output di riferimento spostato a …`,
+   A si deflagga automaticamente. Le opzioni `Coprodotto` e `Rifiuto`
+   sono visibili ma greyed con tooltip M2.4.4.
+2. **Bug D** — Crea exchange nuovo → campo Quantità è vuoto
+   (placeholder `"es. 1.0"`, non `"0"`). Digita `"5"` → mostra `"5"`
+   non `"05"`. Digita `"06.5"` → diventa `"6.5"`. Lascia vuoto e
+   prova a salvare → error `"Exchange …: la quantità è obbligatoria"`.
+   Modifica un exchange esistente con quantity 0 + unit kg → mostra
+   `"0"` come prima.
+3. **Bug E** — Process editor → Location → digita `"Burki"` →
+   autocompleta `"Burkina Faso (BF)"`. Digita `"RoW"` → `"Rest of
+   World"` come opzione. Digita `"Europ"` → almeno `"Europe (RER)"` e
+   `"Europe without Switzerland"`. Digita `"DE"` → `"Germania (DE)"`.
+4. **Bug F** — Crea progetto nuovo senza parameter → exchange → radio
+   "Riferimento parametro" → vede empty-state `"Nessun parametro nel
+   progetto…"` + tooltip `Gestisci parametri (M2.4.4)`. Crea un
+   parametro nel progetto via "Manage parameters" modal in alto →
+   torna all'exchange → radio "Riferimento parametro" → vede dropdown
+   con il parametro.
+5. **Bug L** — Apri pagina progetto. In header (top-right) sono
+   sempre visibili tre CTA: `BoM →`, `Processi →`, `Product System →`.
+   In progetto `flat`: `BoM →` è primary, gli altri secondari. In
+   progetto `process_based`: `Processi →` e `Product System →` sono
+   primary, `BoM →` secondario.
+6. **Bug M** — In FlowSelector → suggest popup → dataset con nome
+   lungo (es. `electricity production, nuclear, boiling water reactor
+   | electricity, high voltage | cutoff, U`) → hover sulla riga
+   mostra tooltip col nome completo. Il nome wrappa su 2 righe con
+   ellipsis se eccede; larghezza popup invariata.
+
+**Ground truth check finale:** 5/5 step QA M2.4.2.0.2a (B'/H/I/J +
+ground-truth originale) ancora verdi (no regressioni). Stato del PR
+#15: il commit `b1b9257` aggiorna la PR; non si è aperta nuova PR.
+
+Se 6/6 + ground-truth verdi → procedi a M2.4.2.0.2c (sprint Bug P
+units closed-set). Se anche solo 1 rosso → loop hotfix correttivo
+dedicato.
+
+### Carry-over
+
+- **Bug P** (units closed-set openLCA + 2 tabelle DB + migration v8 +
+  UnitPicker + auto-conversion) → **M2.4.2.0.2c** sprint dedicato
+  successivo (SPEC separata).
+- **Feature K** (conversione MWh↔kWh, MJ↔kJ con fattori) → assorbita
+  in 2c (emerge gratis dal closed-set + factor).
+- **Bug C — byproduct/waste persistence** → richiede colonne aggiuntive
+  o una `output_type` enum in `Exchange` model. Sprint M2.4.4 con il
+  parameter manager UI (carry-over schema in arrivo).
+- **Bug F — `/projects/:id/parameters` route** → da implementare in
+  M2.4.4 con il parameter manager UI dedicato.
+- **Refactor FlowSelector unificato** (search singolo DB+Interni+Custom,
+  no segmented toggle) → ADR candidate, sprint dedicato post-V1.5.
+- **M2.5 Process editor categorie semantiche LCA** (input
+  natura/tecnosfera/output emissioni) → decisione strategica differita
+  post-V1.5; preferenza Mirko per UX rapida command-palette, NO
+  mimicry SimaPro.
+- **N suggest "usati altrove" scaling** → post-V1.5.
+- **O Browse/Explore DB modality** (modal sfoglia 23k dataset, filter
+  chips) → post-V1.5, fonde con G1.x search globale.
+
+### Commit
+
+- **Codice:** `b1b9257` su `claude/frontend-process-editor-uHvd4` nel
+  repo `lca-tool` (force-push con `--force-with-lease`, **PR #15
+  aggiornata**, NO nuova PR).
+- **Coordination (questo report):** push normale (append-only) sul
+  branch omonimo di `lca-tool-coordination`. **Nessuna PR coordination
+  aperta**: per richiesta SPEC §9, le sezioni M2.4.2.0.1 + 2a + 2b +
+  2c andranno in **una sola PR coordination cumulativa** a fine
+  M2.4.2.0.2c.
+
+---
+
+**End of M2.4.2.0.2b append (2026-05-07).**
